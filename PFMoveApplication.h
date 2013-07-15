@@ -9,3 +9,4 @@
 #import <Foundation/Foundation.h>
 
 void PFMoveToApplicationsFolderIfNecessary(void);
+void PFMoveToApplicationsFolderIfNecessaryWithCallback(void (*exitFunc)(int status));

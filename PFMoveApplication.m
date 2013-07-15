@@ -10,6 +10,7 @@
 #import "NSString+SymlinksAndAliases.h"
 #import <Security/Security.h>
 #import <dlfcn.h>
+#import <sys/mount.h>
 
 // Strings
 // These are macros to be able to use custom i18n tools
@@ -37,6 +38,11 @@
 // set this to 0.
 #define PFUseSmallAlertSuppressCheckbox 1
 
+// Move app only when on read-only volume
+#ifndef PFUseOnlyWhenOnReadOnlyVolume
+# define PFUseOnlyWhenOnReadOnlyVolume 1
+#endif
+
 // By default, we allow moving the application into ~/Applications.
 // If you prefer to only use the shared location (/Applications),
 // set this to NO
@@ -47,24 +53,40 @@ static NSString *AlertSuppressKey = @"moveToApplicationsFolderAlertSuppress";
 
 // Helper functions
 static NSString *PreferredInstallLocation(BOOL *isUserDirectory);
+static BOOL IsRunningOnReadOnlyVolume(NSString *path);
 static BOOL IsInApplicationsFolder(NSString *path);
 static BOOL IsInDownloadsFolder(NSString *path);
-static BOOL IsLaunchedFromDMG();
+static BOOL IsLaunchedFromDMG(void);
 static BOOL Trash(NSString *path);
 static BOOL AuthorizedInstall(NSString *srcPath, NSString *dstPath, BOOL *canceled);
 static BOOL CopyBundle(NSString *srcPath, NSString *dstPath);
-static void Relaunch();
+static void Relaunch(NSString* path, void (*exitFunc)(int status));
 
 // Main worker function
 void PFMoveToApplicationsFolderIfNecessary(void) {
-	// Skip if user suppressed the alert before
-	if ([[NSUserDefaults standardUserDefaults] boolForKey:AlertSuppressKey]) return;
+    PFMoveToApplicationsFolderIfNecessaryWithCallback(exit);
+}
 
+void PFMoveToApplicationsFolderIfNecessaryWithCallback(void (*exitFunc)(int status)) {
 	// Path of the bundle
 	NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    
+#if PFUseOnlyWhenOnReadOnlyVolume
+    // Skip if the application is not in read-only volume
+    if (!IsRunningOnReadOnlyVolume(bundlePath)) return;
+#endif
 
+    // Generate suppress key from HFS path (POSIX path will be changed because of duplicate volume name)
+    NSString *bundleHFSPath = [(NSString *)CFURLCopyFileSystemPath((CFURLRef)[NSURL fileURLWithPath:bundlePath], kCFURLHFSPathStyle) autorelease];
+    NSString *pathRelatedSuppressKey = [AlertSuppressKey stringByAppendingString:bundleHFSPath];
+
+	// Skip if user suppressed the alert before
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:pathRelatedSuppressKey]) return;
+
+#if !PFUseOnlyWhenOnReadOnlyVolume
 	// Skip if the application is already in some Applications folder
 	if (IsInApplicationsFolder(bundlePath)) return;
+#endif
 
 	// File Manager
 	NSFileManager *fm = [NSFileManager defaultManager];
@@ -178,7 +200,8 @@ void PFMoveToApplicationsFolderIfNecessary(void) {
 					// Give the running app focus and terminate myself
 					NSLog(@"INFO -- Switching to an already running version");
 					[[NSTask launchedTaskWithLaunchPath:@"/usr/bin/open" arguments:[NSArray arrayWithObject:destinationPath]] waitUntilExit];
-					exit(0);
+					exitFunc(0);
+                    return;
 				}
 				else {
 					if (!Trash([applicationsDirectory stringByAppendingPathComponent:bundleName]))
@@ -201,20 +224,20 @@ void PFMoveToApplicationsFolderIfNecessary(void) {
 		}
 
 		// Relaunch.
-		Relaunch(destinationPath);
+		Relaunch(destinationPath, exitFunc);
 	}
 	else {
 		if (floor(NSAppKitVersionNumber) > NSAppKitVersionNumber10_4) {
 			// Save the alert suppress preference if checked
 #if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_4
 			if ([[alert suppressionButton] state] == NSOnState) {
-				[[NSUserDefaults standardUserDefaults] setBool:YES forKey:AlertSuppressKey];
+                [[NSUserDefaults standardUserDefaults] setBool:YES forKey:pathRelatedSuppressKey];
 			}
 #endif
 		}
 		else {
 			// Always suppress after the first decline on 10.4 since there is no suppression checkbox
-			[[NSUserDefaults standardUserDefaults] setBool:YES forKey:AlertSuppressKey];
+			[[NSUserDefaults standardUserDefaults] setBool:YES forKey:pathRelatedSuppressKey];
 		}
 	}
 
@@ -271,6 +294,13 @@ static NSString *PreferredInstallLocation(BOOL *isUserDirectory) {
 
 	// No user Applications directory in use. Return the machine local Applications directory
 	return sharedApplicationDirectory;
+}
+
+static BOOL IsRunningOnReadOnlyVolume(NSString *path)
+{
+	struct statfs statfs_info;
+	statfs([path fileSystemRepresentation], &statfs_info);
+	return (statfs_info.f_flags & MNT_RDONLY);
 }
 
 static BOOL IsInApplicationsFolder(NSString *path) {
@@ -431,7 +461,7 @@ static BOOL CopyBundle(NSString *srcPath, NSString *dstPath) {
 	return NO;
 }
 
-static void Relaunch(NSString *destinationPath) {
+static void Relaunch(NSString *destinationPath, void (*exitFunc)(int status)) {
 	// The shell script waits until the original app process terminates.
 	// This is done so that the relaunched app opens as the front-most app.
 	int pid = [[NSProcessInfo processInfo] processIdentifier];
@@ -463,5 +493,5 @@ static void Relaunch(NSString *destinationPath) {
 		[NSTask launchedTaskWithLaunchPath:@"/bin/sh" arguments:[NSArray arrayWithObjects:@"-c", script, nil]];
 	}
 
-	exit(0);
+	exitFunc(0);
 }
