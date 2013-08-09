@@ -39,8 +39,8 @@
 #define PFUseSmallAlertSuppressCheckbox 1
 
 // Move app only when on read-only volume
-#ifndef PFUseOnlyWhenOnReadOnlyVolume
-# define PFUseOnlyWhenOnReadOnlyVolume 1
+#ifndef PFUseOnlyWhenOnReadOnlyVolumeOrDownloadsFolder
+# define PFUseOnlyWhenOnReadOnlyVolumeOrDownloadsFolder 1
 #endif
 
 // By default, we allow moving the application into ~/Applications.
@@ -71,9 +71,9 @@ void PFMoveToApplicationsFolderIfNecessaryWithCallback(void (*exitFunc)(int stat
 	// Path of the bundle
 	NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
     
-#if PFUseOnlyWhenOnReadOnlyVolume
-    // Skip if the application is not in read-only volume
-    if (!IsRunningOnReadOnlyVolume(bundlePath)) return;
+#if PFUseOnlyWhenOnReadOnlyVolumeOrDownloadsFolder
+    // Skip if the application is not in read-only volume and not in Downloads folder
+    if (!IsRunningOnReadOnlyVolume(bundlePath)&&!IsInDownloadsFolder(bundlePath)) return;
 #endif
 
     // Generate suppress key from HFS path (POSIX path will be changed because of duplicate volume name)
@@ -83,10 +83,8 @@ void PFMoveToApplicationsFolderIfNecessaryWithCallback(void (*exitFunc)(int stat
 	// Skip if user suppressed the alert before
     if ([[NSUserDefaults standardUserDefaults] boolForKey:pathRelatedSuppressKey]) return;
 
-#if !PFUseOnlyWhenOnReadOnlyVolume
 	// Skip if the application is already in some Applications folder
 	if (IsInApplicationsFolder(bundlePath)) return;
-#endif
 
 	// File Manager
 	NSFileManager *fm = [NSFileManager defaultManager];
