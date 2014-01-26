@@ -495,7 +495,7 @@ static NSString *ShellQuotedString(NSString *string) {
     return [NSString stringWithFormat:@"'%@'", [string stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]];
 }
 
-static void Relaunch(NSString *destinationPath, void (*exitFunc)(int status)) {
+static void Relaunch(NSString *destinationPath) {
 	// The shell script waits until the original app process terminates.
 	// This is done so that the relaunched app opens as the front-most app.
 	int pid = [[NSProcessInfo processInfo] processIdentifier];
